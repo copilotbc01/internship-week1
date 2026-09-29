@@ -1,0 +1,91 @@
+services:
+  db:
+    image: postgres:15
+    container_name: week2-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: internship
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - supabase-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d internship"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rest:
+    image: postgrest/postgrest:v12.2.3
+    container_name: week2-postgrest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://postgres:postgres@db:5432/internship
+      PGRST_DB_SCHEMA: public
+      PGRST_DB_ANON_ROLE: postgres
+    networks:
+      - supabase-network
+
+  auth:
+    image: supabase/gotrue:v2.177.0
+    container_name: week2-gotrue
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://postgres:postgres@db:5432/internship
+      GOTRUE_SITE_URL: http://localhost:5001
+      GOTRUE_URI_ALLOW_LIST: "*"
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      API_EXTERNAL_URL: http://localhost:8000
+    networks:
+      - supabase-network
+
+  kong:
+    image: kong:2.8.1
+    container_name: week2-kong
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/kong.yml
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
+    volumes:
+      - ./kong.yml:/kong/kong.yml:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      - rest
+      - auth
+    networks:
+      - supabase-network
+
+  app:
+    build: .
+    container_name: week2-app
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/internship
+    ports:
+      - "5001:5000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - supabase-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  supabase-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
